@@ -31,7 +31,7 @@ done
 
 
 # Arbitrary decision about the maximal length of sequences to be trimmed of
-length=150
+length=145
 
 # Make OUTPUT_DIR if it doesn't exist
 mkdir -p $OUTPUT_DIR
@@ -54,10 +54,9 @@ for file in "$INPUT_DIR"/*; do
     fi
 done
 
+
 # Remove duplicates and sort the array naturally
 unique_sorted_numbers=($(echo "${sample_numbers[@]}" | tr ' ' '\n' | sort -n -k1,1 | uniq))
-
-
 
 ######## Run pipeline by samples ########
 
@@ -65,28 +64,29 @@ for n in "${unique_sorted_numbers[@]}" # Iterate over samples
 do
 	for file_R1 in $INPUT_DIR/*S${n}_*_R1_001.fastq.gz # Iterate over files
 	do
-		base=$(basename $file_R2 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
 		
+		base=$(basename $file_R1 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
+
 		# Make output directory for the lane
 		OUTPUT_SUBDIR=$OUTPUT_DIR/$base 
 		mkdir -p $OUTPUT_SUBDIR
-		
+	
 		# File with reverse reads
 		file_R2=$INPUT_DIR/${base}_R2_001.fastq.gz
 		#html_file=$OUTPUT_SUBDIR/${base}.html
 		
 		# Paths for trimmed files
-		fastq_trim1=$OUTPUT_SUBDIR/${base}_R1_001.fastq.gz
-		fastq_trim2=$OUTPUT_SUBDIR/${base}_R2_001.fastq.gz
+		fastq_trim1=$OUTPUT_SUBDIR/${base}_R1_001.fastq
+		fastq_trim2=$OUTPUT_SUBDIR/${base}_R2_001.fastq
+		
+		echo $fastq_trim1 $fastq_trim2
 
 		# Trimming
-		fastp -i $file -I $file_R2 -l $length -y 50 -n 0 -o fastq_trim1 -O fastq_trim2
+		fastp -i $file_R1 -I $file_R2 -l $length -y 50 -n 0 -o $fastq_trim1 -O $fastq_trim2
 
-		
-
-		if ! [ -f  $REF_DIR/${ref_fa}.pac ]; then #Check if index file exists
-	    		bowtie2-build $REF_DIR/$ref_fa $index_base #Make index files (I believe It does)
-		fi
+		# if ! [ -f  $REF_DIR/${ref_fa}.pac ]; then #Check if index file exists
+	    		# bowtie2-build $REF_DIR/$ref_fa $index_base #Make index files (I believe It does)
+		# fi
 		
 		# Path for alignment
 		sam_output=${base}.sam
