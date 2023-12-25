@@ -2,12 +2,14 @@
 
 
 n_cores=4 # by default
-VCF_DIR=./vcfs_folder
+SAM_DIR=sam_folder
+BAM_DIR=bam_folder
+VCF_NAME=vcf_folder 
 
 
 ######## Arguments #######
 
-while getopts 'i:o:n:d:f:b:v:g:' flag; do
+while getopts 'i:o:n:d:f:b:g:' flag; do
   case "${flag}" in
     i) INPUT_DIR=${OPTARG} ;;
     o) OUTPUT_DIR=${OPTARG} ;;
@@ -15,12 +17,15 @@ while getopts 'i:o:n:d:f:b:v:g:' flag; do
     d) REF_DIR=${OPTARG} ;;
     f) ref_fa=${OPTARG} ;;
     b) index_base=${OPTARG} ;;
-    v) VCF_DIR=${OPTARG} ;;
     g) PATH_TO_GATK_PYFILE=${OPTARG} ;; 
     *) print_usage
        exit 1 ;;
   esac
 done 
+
+SAM_DIR=$OUTPUT_DIR/$SAM_DIR
+BAM_DIR=$OUTPUT_DIR/$BAM_DIR
+VCF_DIR=$OUTPUT_DIR/$VCF_NAME
 
 
 # Arbitrary decision about the maximal length of sequences to be trimmed of
@@ -28,9 +33,8 @@ length=140
 
 # Make OUTPUT_DIR if it doesn't exist
 mkdir -p $OUTPUT_DIR
+mkdir -p $BAM_DIR
 mkdir -p $VCF_DIR
-
-
 
 ######## Retrieve list of sample numbers ########
 
@@ -54,31 +58,8 @@ unique_sorted_numbers=($(echo "${sample_numbers[@]}" | tr ' ' '\n' | sort -n -k1
 
 echo "Running samtools indexing..."
 
-ref_path=$REF_DIR/$ref_fa 
-#ref_ungzipped_path="${REF_DIR/$ref_fa%.gz}"
-ref_bgzip_path="${REF_DIR/$ref_fa%.gz}".bgz
-
-#gunzip -c grch37.fa.gz | bgzip > grch37.fa.bgz
-
-#if ! [ -f $ref_ungzipped_path ]
-#then
-#	bgzip -d $ref_path 
-#fi
-
-if ! [ -f $ref_bgzip_path ]
-then
-	gunzip -c $ref_path | bgzip > $ref_bgzip_path
-fi
-
-if ! [ -f $ref_bgzip_path.dict ]
-then
-	samtools dict $ref_bgzip_path -o $ref_bgzip_path.dict
-fi
-
-if ! [ -f $ref_bgzip_path.fai ]
-then
-	samtools faidx $ref_bgzip_path -o $ref_bgzip_path.fai
-fi
+samtools faidx $REF_DIR/$ref_fa -o $REF_DIR/$index_base.fasta.fai
+samtools dict $REF_DIR/$ref_fa -o $REF_DIR/$index_base.dict
 
 echo "Analyzing samples..."	
 
@@ -159,34 +140,32 @@ do
 		# Add name for read group .bam file
 		python3 $PATH_TO_GATK_PYFILE AddOrReplaceReadGroups \
 			I=$OUTPUT_SUBDIR/${base}.bam \
-			O=$OUTPUT_SUBDIR/${base}.grouped.bam \
+			O=$BAM_DIR/${base}.grouped.bam \
 			RGID=4 \
 			RGLB=lib1 \
 			RGPL=ILLUMINA \
 			RGPU=unit1 \
 			RGSM=20
 		
-		# Index .bam files
-		samtools index $OUTPUT_SUBDIR/${base}.grouped.bam
-		
-		# Make variant calling using gatk HaplotypeCaller
-		
-		echo "Calling SNPs..."
-		
-		python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
-			-R $ref_bgzip_pat \
-			-I $OUTPUT_SUBDIR/${base}.grouped.bam \
-			-O $VCF_DIR/${base}.vcf.gz \
-			-ERC GVCF 
-		
+	done
+	
+	samtools merge -f $BAM_DIR/S${n}_merged.bam $BAM_DIR/*_S${n}_L00[1-4].grouped.bam
+
+	samtools index $BAM_DIR/S${n}_merged.bam
+
+	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
+			-R $REF_DIR/$ref_fa \
+			-I $BAM_DIR/S${n}_merged.bam \
+			-O $VCF_DIR/${n}_sample.vcf.gz \
+			-ERC GVCF
+	
+	for item in "$OUTPUT_DIR"/*; do
+  		if [[ -d $item && $(basename "$item") != $VCF_NAME ]]; then
+    
+    			rm -f "$OUTPUT_DIR/$item"/*
+  		fi
 	done
 done
-
-python3 /home/nadzeya/gatk-4.4.0.0/gatk --java-options "-Xmx11g" HaplotypeCaller  \
-			-R /media/nadzeya/new/ref/grch37.fa.bgz \
-			-I /media/nadzeya/new/s1_out/48_S1_L001/48_S1_L001.grouped.bam \
-			-O /media/nadzeya/new/s1_out/vcfs/f.vcf.gz \
-			-ERC GVCF 
 
 
 
