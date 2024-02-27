@@ -2,7 +2,6 @@
 
 
 n_cores=4 # by default
-SAM_DIR=sam_folder
 BAM_DIR=bam_folder
 VCF_NAME=vcf_folder 
 
@@ -24,29 +23,36 @@ while getopts 'i:o:n:d:f:b:g:s:' flag; do
   esac
 done 
 
-SAM_DIR=$OUTPUT_DIR/$SAM_DIR
 BAM_DIR=$OUTPUT_DIR/$BAM_DIR
 VCF_DIR=$OUTPUT_DIR/$VCF_NAME
 
 
 
 # Arbitrary decision about the maximal length of sequences to be trimmed of
+
 length=140
 
 # Make OUTPUT_DIR if it doesn't exist
+
 mkdir -p $OUTPUT_DIR
 mkdir -p $BAM_DIR
 mkdir -p $VCF_DIR
 
+
+
+
 ######## Retrieve list of sample numbers ########
 
 # Define an empty array to store the sample numbers
+
 sample_numbers=()
 
 # Define the regular expression pattern to extract sample numbers
+
 pattern="[0-9]+_S([0-9]+)_"
 
 # Loop through the files in the folder
+
 for file in "$INPUT_DIR"/*; do
     if [[ $file =~ $pattern ]]; then
         sample_number="${BASH_REMATCH[1]}"
@@ -54,8 +60,8 @@ for file in "$INPUT_DIR"/*; do
     fi
 done
 
-
 # Remove duplicates and sort the array naturally
+
 unique_sorted_numbers=($(echo "${sample_numbers[@]}" | tr ' ' '\n' | sort -n -k1,1 | uniq))
 
 echo "Running samtools indexing..."
@@ -65,13 +71,16 @@ samtools dict $REF_DIR/$ref_fa -o $REF_DIR/$index_base.dict
 
 echo "Analyzing samples..."	
 
+
+
+
 ######## Run pipeline by samples ########
 
-for n in "${unique_sorted_numbers[@]}" # Iterate over samples
+for sample_number in "${unique_sorted_numbers[@]}" # Iterate over samples
 do
-	echo "Analyzing sample $n..."
+	echo "Analyzing sample $sample_number..."
 	
-	for file_R1 in $INPUT_DIR/*S${n}_*_R1_001.fastq.gz # Iterate over files
+	for file_R1 in $INPUT_DIR/*S${sample_number}_*_R1_001.fastq.gz # Iterate over files
 	do
 		
 		echo "Working with file $file_R1..."
@@ -79,17 +88,21 @@ do
 		base=$(basename $file_R1 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
 
 		# Make output directory for the lane
+		
 		OUTPUT_SUBDIR=$OUTPUT_DIR/$base 
 		mkdir -p $OUTPUT_SUBDIR
 	
 		# File with reverse reads
+		
 		file_R2=$INPUT_DIR/${base}_R2_001.fastq.gz
 		
 		# Paths for trimmed files
+		
 		fastq_trim1=$OUTPUT_SUBDIR/${base}_R1_001.fastq
 		fastq_trim2=$OUTPUT_SUBDIR/${base}_R2_001.fastq
 
 		# Trimming
+		
 		echo "Launching fastp..."
 		
 		fastp -i $file_R1 -I $file_R2 -l $length -y 50 -n 0 -o $fastq_trim1 -O $fastq_trim2
@@ -140,6 +153,7 @@ do
 		samtools sort $OUTPUT_SUBDIR/${base}.dedup.sam > $OUTPUT_SUBDIR/${base}.bam
 		
 		# Add name for read group in .bam file
+		
 		python3 $PATH_TO_GATK_PYFILE AddOrReplaceReadGroups \
 			I=$OUTPUT_SUBDIR/${base}.bam \
 			O=$BAM_DIR/${base}.grouped.bam \
@@ -151,20 +165,24 @@ do
 		
 	done
 	
-	# Merge .bam files from each line
-	samtools merge -f $BAM_DIR/S${n}_merged.bam $BAM_DIR/*_S${n}_L00[1-4].grouped.bam
+	# Merge .bam files from each lane of the sample
+	
+	samtools merge -f $BAM_DIR/S${sample_number}_merged.bam $BAM_DIR/*_S${sample_number}_L00[1-4].grouped.bam
 	
 	# Index .bam files
-	samtools index $BAM_DIR/S${n}_merged.bam
+	
+	samtools index $BAM_DIR/S${sample_number}_merged.bam
 	
 	# Use HaplotypeCaller to create .vcf files
+	
 	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
 			-R $REF_DIR/$ref_fa \
-			-I $BAM_DIR/S${n}_merged.bam \
-			-O $VCF_DIR/${n}_sample.vcf.gz \
+			-I $BAM_DIR/S${sample_number}_merged.bam \
+			-O $VCF_DIR/${sample_number}_sample.vcf.gz \
 			-ERC GVCF
 	
 	# Remove subfolders and files in bam_folder from outout folder
+	
 	for folder in "$OUTPUT_DIR"/*; do
 	  if [ -d "$folder" ]; then
 	    if [[ "$folder" != "$VCF_DIR" && "$folder" != "$BAM_DIR" ]]; then
@@ -177,6 +195,7 @@ done
 
 
 # Create a list with all vcf files in vcf_folder
+
 for file in $VCF_DIR/*vcf.gz
 do
   input+=("-V $file")
@@ -184,14 +203,7 @@ done
 
 echo $input
 
-# Merge all vcf files
-python3 $PATH_TO_GATK_PYFILE CombineGVCFs -R $REF_DIR/$ref_fa ${input[@]} -O $VCF_DIR/combined.g.vcf.gz
 
-# Perform joint genotyping
-python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" GenotypeGVCFs \
-    -R $REF_DIR/$ref_fa \
-    -V $VCF_DIR/combined.g.vcf.gz \
-    -O $VCF_DIR/genotype.vcf.gz
 
 # 
 mkdir -p final_folder
