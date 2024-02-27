@@ -9,7 +9,7 @@ VCF_NAME=vcf_folder
 
 ######## Arguments #######
 
-while getopts 'i:o:n:d:f:b:g:' flag; do
+while getopts 'i:o:n:d:f:b:g:s:' flag; do
   case "${flag}" in
     i) INPUT_DIR=${OPTARG} ;;
     o) OUTPUT_DIR=${OPTARG} ;;
@@ -17,7 +17,8 @@ while getopts 'i:o:n:d:f:b:g:' flag; do
     d) REF_DIR=${OPTARG} ;;
     f) ref_fa=${OPTARG} ;;
     b) index_base=${OPTARG} ;;
-    g) PATH_TO_GATK_PYFILE=${OPTARG} ;; 
+    g) PATH_TO_GATK_PYFILE=${OPTARG} ;;
+    s) PATH_TO_SNPEFF_FOLDER=${OPTARG} ;; 
     *) print_usage
        exit 1 ;;
   esac
@@ -26,6 +27,7 @@ done
 SAM_DIR=$OUTPUT_DIR/$SAM_DIR
 BAM_DIR=$OUTPUT_DIR/$BAM_DIR
 VCF_DIR=$OUTPUT_DIR/$VCF_NAME
+
 
 
 # Arbitrary decision about the maximal length of sequences to be trimmed of
@@ -93,7 +95,7 @@ do
 		fastp -i $file_R1 -I $file_R2 -l $length -y 50 -n 0 -o $fastq_trim1 -O $fastq_trim2
 
 		if ! [ -f  $REF_DIR/${index_base}.1.bt2 ]; then #Check if index file exists			
-	    		bowtie2-build $REF_DIR/$ref_fa $index_base #Make index files 
+	    		bowtie2-build $REF_DIR/$ref_fa $REF_DIR/$index_base #Make index files 
 		fi
 
 		# Path for alignment
@@ -158,16 +160,47 @@ do
 			-I $BAM_DIR/S${n}_merged.bam \
 			-O $VCF_DIR/${n}_sample.vcf.gz \
 			-ERC GVCF
-	
-	for item in "$OUTPUT_DIR"/*; do
-  		if [[ -d $item && $(basename "$item") != $VCF_NAME ]]; then
-    
-    			rm -f "$OUTPUT_DIR/$item"/*
-  		fi
+
+	for folder in "$OUTPUT_DIR"/*; do
+	  if [ -d "$folder" ]; then
+	    if [[ "$folder" != "$VCF_DIR" && "$folder" != "$BAM_DIR" ]]; then
+	      rm -rf "$folder"
+	    fi
+	  fi
 	done
+	rm -rf "$BAM_DIR"/*
 done
 
 
+for file in $VCF_DIR/*vcf.gz
+do
+  input+=("-V $file")
+done
+
+echo $input
+
+python3 $PATH_TO_GATK_PYFILE CombineGVCFs -R $REF_DIR/$ref_fa ${input[@]} -O $VCF_DIR/combined.g.vcf.gz
+
+python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" GenotypeGVCFs \
+    -R $REF_DIR/$ref_fa \
+    -V $VCF_DIR/combined.g.vcf.gz \
+    -O $VCF_DIR/genotype.vcf.gz
 
 
+mkdir -p final_folder
+
+java -Xmx8g -jar $PATH_TO_SNPEFF/snpEff.jar -v \
+     -lof \
+     GRCh37.75 \
+     $OUTPUT_DIR/genotype.vcf.gz > $OUTPUT_DIR/final_folder/genotype.ann.vcf
+
+cat $OUTPUT_DIR/final_folder/genotype.ann.vcf | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $OUTPUT_DIR/final_folder/filtered.vcf
+
+java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar annotate -id -v $PATH_TO_SNPEFF/data/GRCh37.75/clinvar/clinvar.vcf.gz $OUTPUT_DIR/final_folder/filtered.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.vcf
+
+java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar filter -v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " $OUTPUT_DIR/final_folder/vatiants.clinvar.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.filtered.vcf
+
+java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar varType -v $OUTPUT_DIR/final_folder/vatiants.clinvar.filtered.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.vt.filtered.vcf
+
+java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar extractFields -s "," -v $OUTPUT_DIR/final_folder/vatiants.clinvar.vt.filtered.vcf CHROM POS ID REF ALT QUAL VARTYPE SNP MNP INS DEL MIXED HOM HET ANN[*].ALLELE ANN[*].EFFECT ANN[*].IMPACT ANN[*].GENE ANN[*].GENEID ANN[*].FEATURE ANN[*].FEATUREID ANN[*].BIOTYPE ANN[*].RANK ANN[*].HGVS_C ANN[*].HGVS_P ANN[*].CDNA_POS ANN[*].CDNA_LEN ANN[*].CDS_POS ANN[*].CDS_LEN ANN[*].AA_POS ANN[*].AA_LEN ANN[*].DISTANCE ANN[*].ERRORS LOF[*].NUMTR LOF[*].PERC NMD[*].NUMTR NMD[*].PERC ANN DBVARID ALLELEID CLNSIG CLNVCSO CLNREVSTAT RS CLNDNINCL ORIGIN MC CLNDN CLNVC CLNVI AF_EXAC AF_ESP CLNSIGINCL CLNDISDB GENEINFO CLNDISDBINCL AF_TGP CLNSIGCONF CLNHGVS > $OUTPUT_DIR/final_folder/extracted.tsv
 
