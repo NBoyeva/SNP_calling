@@ -139,7 +139,7 @@ do
 		
 		samtools sort $OUTPUT_SUBDIR/${base}.dedup.sam > $OUTPUT_SUBDIR/${base}.bam
 		
-		# Add name for read group .bam file
+		# Add name for read group in .bam file
 		python3 $PATH_TO_GATK_PYFILE AddOrReplaceReadGroups \
 			I=$OUTPUT_SUBDIR/${base}.bam \
 			O=$BAM_DIR/${base}.grouped.bam \
@@ -151,16 +151,20 @@ do
 		
 	done
 	
+	# Merge .bam files from each line
 	samtools merge -f $BAM_DIR/S${n}_merged.bam $BAM_DIR/*_S${n}_L00[1-4].grouped.bam
-
+	
+	# Index .bam files
 	samtools index $BAM_DIR/S${n}_merged.bam
-
+	
+	# Use HaplotypeCaller to create .vcf files
 	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
 			-R $REF_DIR/$ref_fa \
 			-I $BAM_DIR/S${n}_merged.bam \
 			-O $VCF_DIR/${n}_sample.vcf.gz \
 			-ERC GVCF
-
+	
+	# Remove subfolders and files in bam_folder from outout folder
 	for folder in "$OUTPUT_DIR"/*; do
 	  if [ -d "$folder" ]; then
 	    if [[ "$folder" != "$VCF_DIR" && "$folder" != "$BAM_DIR" ]]; then
@@ -172,6 +176,7 @@ do
 done
 
 
+# Create a list with all vcf files in vcf_folder
 for file in $VCF_DIR/*vcf.gz
 do
   input+=("-V $file")
@@ -179,14 +184,16 @@ done
 
 echo $input
 
+# Merge all vcf files
 python3 $PATH_TO_GATK_PYFILE CombineGVCFs -R $REF_DIR/$ref_fa ${input[@]} -O $VCF_DIR/combined.g.vcf.gz
 
+# Perform joint genotyping
 python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" GenotypeGVCFs \
     -R $REF_DIR/$ref_fa \
     -V $VCF_DIR/combined.g.vcf.gz \
     -O $VCF_DIR/genotype.vcf.gz
 
-
+# 
 mkdir -p final_folder
 
 java -Xmx8g -jar $PATH_TO_SNPEFF/snpEff.jar -v \
@@ -194,13 +201,17 @@ java -Xmx8g -jar $PATH_TO_SNPEFF/snpEff.jar -v \
      GRCh37.75 \
      $OUTPUT_DIR/genotype.vcf.gz > $OUTPUT_DIR/final_folder/genotype.ann.vcf
 
-cat $OUTPUT_DIR/final_folder/genotype.ann.vcf | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $OUTPUT_DIR/final_folder/filtered.vcf
+cat $OUTPUT_DIR/final_folder/genotype.ann.vcf | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $OUTPUT_DIR/final_folder/filtered.vcf ###################
 
+# .vcf annotation with clinvar database
 java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar annotate -id -v $PATH_TO_SNPEFF/data/GRCh37.75/clinvar/clinvar.vcf.gz $OUTPUT_DIR/final_folder/filtered.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.vcf
 
+# Filtration by clinvar database
 java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar filter -v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " $OUTPUT_DIR/final_folder/vatiants.clinvar.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.filtered.vcf
 
+# 
 java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar varType -v $OUTPUT_DIR/final_folder/vatiants.clinvar.filtered.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.vt.filtered.vcf
 
+# Obtain .tsv table from 
 java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar extractFields -s "," -v $OUTPUT_DIR/final_folder/vatiants.clinvar.vt.filtered.vcf CHROM POS ID REF ALT QUAL VARTYPE SNP MNP INS DEL MIXED HOM HET ANN[*].ALLELE ANN[*].EFFECT ANN[*].IMPACT ANN[*].GENE ANN[*].GENEID ANN[*].FEATURE ANN[*].FEATUREID ANN[*].BIOTYPE ANN[*].RANK ANN[*].HGVS_C ANN[*].HGVS_P ANN[*].CDNA_POS ANN[*].CDNA_LEN ANN[*].CDS_POS ANN[*].CDS_LEN ANN[*].AA_POS ANN[*].AA_LEN ANN[*].DISTANCE ANN[*].ERRORS LOF[*].NUMTR LOF[*].PERC NMD[*].NUMTR NMD[*].PERC ANN DBVARID ALLELEID CLNSIG CLNVCSO CLNREVSTAT RS CLNDNINCL ORIGIN MC CLNDN CLNVC CLNVI AF_EXAC AF_ESP CLNSIGINCL CLNDISDB GENEINFO CLNDISDBINCL AF_TGP CLNSIGCONF CLNHGVS > $OUTPUT_DIR/final_folder/extracted.tsv
 
