@@ -26,8 +26,6 @@ done
 TEMP_DIR=$OUTPUT_DIR/$temp_dir
 VCF_DIR=$OUTPUT_DIR/$VCF_dir
 
-
-
 # Arbitrary decision about the maximal length of sequences to be trimmed of
 
 length=140
@@ -117,9 +115,11 @@ do
 		fi
 
 		# Path for alignment
+		
 		sam_output=${base}.sam
 		
 		# Alignment
+		
 		echo "Making alignment..."
 		
 		bowtie2 -p $n_cores \
@@ -182,22 +182,53 @@ do
 	
 	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
 			-R $REF_DIR/$ref_fa \
-			-I $SUBDIR_SAMPLE/$S{sample_number}_merged.bam \
-			-O $VCF_DIR/${sample_number}_sample.vcf.gz \
+			-I $SUBDIR_SAMPLE/S${sample_number}_merged.bam \
+			-O $SUBDIR_SAMPLE/S${sample_number}.vcf.gz \
 			-ERC GVCF
 	
-	# Remove subfolders and files in bam_folder from outout folder
+	# vcf quality filtration
 	
-	for folder in "$OUTPUT_DIR"/*; do
-	  if [ -d "$folder" ]; then
-	    if [[ "$folder" != "$VCF_DIR" && "$folder" != "$BAM_DIR" ]]; then
-	      rm -rf "$folder"
-	    fi
-	  fi
-	done
-	rm -rf "$BAM_DIR"/*
+	cat $SUBDIR_SAMPLE/S${sample_number}.vcf.gz | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $SUBDIR_SAMPLE/S${sample_number}.filtered.vcf 
+
+	# SnpEff annotation
+	
+	java -Xmx8g -jar $PATH_TO_SNPEFF/snpEff.jar -v \
+	     -lof \
+	     GRCh37.75 \
+	     $SUBDIR_SAMPLE/S${sample_number}.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf # vcf.gz used before; check if works
+
+	
+	# .vcf annotation with clinvar database
+	
+	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar annotate -id \
+	-v $PATH_TO_SNPEFF/data/GRCh37.75/clinvar/clinvar.vcf.gz \
+	$SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf
+
+	# Filtration by clinvar database
+	
+	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar filter \
+	-v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " \
+	$SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf
+
+	# 
+	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar varType -v \
+	$SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf > $VCF_DIR/S${sample_number}.vcf
+
+	# Obtain .tsv table from 
+	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar extractFields -s "," \
+	-v $VCF_DIR/S${sample_number}.vcf \
+	CHROM POS ID REF ALT QUAL VARTYPE SNP MNP INS DEL MIXED HOM HET ANN[*].ALLELE ANN[*].EFFECT ANN[*].IMPACT ANN[*].GENE ANN[*].GENEID ANN[*].FEATURE ANN[*].FEATUREID ANN[*].BIOTYPE ANN[*].RANK ANN[*].HGVS_C ANN[*].HGVS_P ANN[*].CDNA_POS ANN[*].CDNA_LEN ANN[*].CDS_POS ANN[*].CDS_LEN ANN[*].AA_POS ANN[*].AA_LEN ANN[*].DISTANCE ANN[*].ERRORS LOF[*].NUMTR LOF[*].PERC NMD[*].NUMTR NMD[*].PERC ANN DBVARID ALLELEID CLNSIG CLNVCSO CLNREVSTAT RS CLNDNINCL ORIGIN MC CLNDN CLNVC CLNVI AF_EXAC AF_ESP CLNSIGINCL CLNDISDB GENEINFO CLNDISDBINCL AF_TGP CLNSIGCONF CLNHGVS \
+	> $VCF_DIR/S${sample_number}.tsv
+	
+	# Remove subfolders and files in temporal directory
+	
+	rm -r $TEMP_DIR
 done
 
+
+:'
+
+Code to be removed:
 
 # Create a list with all vcf files in vcf_folder
 
@@ -208,10 +239,6 @@ done
 
 echo $input
 
-
-
-# 
-mkdir -p final_folder
 
 # vcf quality filtration
 cat $OUTPUT_DIR/final_folder/genotype.ann.vcf | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $OUTPUT_DIR/final_folder/filtered.vcf 
@@ -233,4 +260,6 @@ java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar varType -v $OUTPUT_DIR/final_folder
 
 # Obtain .tsv table from 
 java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar extractFields -s "," -v $OUTPUT_DIR/final_folder/vatiants.clinvar.vt.filtered.vcf CHROM POS ID REF ALT QUAL VARTYPE SNP MNP INS DEL MIXED HOM HET ANN[*].ALLELE ANN[*].EFFECT ANN[*].IMPACT ANN[*].GENE ANN[*].GENEID ANN[*].FEATURE ANN[*].FEATUREID ANN[*].BIOTYPE ANN[*].RANK ANN[*].HGVS_C ANN[*].HGVS_P ANN[*].CDNA_POS ANN[*].CDNA_LEN ANN[*].CDS_POS ANN[*].CDS_LEN ANN[*].AA_POS ANN[*].AA_LEN ANN[*].DISTANCE ANN[*].ERRORS LOF[*].NUMTR LOF[*].PERC NMD[*].NUMTR NMD[*].PERC ANN DBVARID ALLELEID CLNSIG CLNVCSO CLNREVSTAT RS CLNDNINCL ORIGIN MC CLNDN CLNVC CLNVI AF_EXAC AF_ESP CLNSIGINCL CLNDISDB GENEINFO CLNDISDBINCL AF_TGP CLNSIGCONF CLNHGVS > $OUTPUT_DIR/final_folder/extracted.tsv
+
+'
 
