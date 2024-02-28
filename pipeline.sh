@@ -2,8 +2,8 @@
 
 
 n_cores=4 # by default
-BAM_DIR=bam_folder
-VCF_NAME=vcf_folder 
+temp_dir=temp_folder
+VCF_dir=vcf_folder 
 
 
 ######## Arguments #######
@@ -23,8 +23,8 @@ while getopts 'i:o:n:d:f:b:g:s:' flag; do
   esac
 done 
 
-BAM_DIR=$OUTPUT_DIR/$BAM_DIR
-VCF_DIR=$OUTPUT_DIR/$VCF_NAME
+TEMP_DIR=$OUTPUT_DIR/$temp_dir
+VCF_DIR=$OUTPUT_DIR/$VCF_dir
 
 
 
@@ -35,7 +35,6 @@ length=140
 # Make OUTPUT_DIR if it doesn't exist
 
 mkdir -p $OUTPUT_DIR
-mkdir -p $BAM_DIR
 mkdir -p $VCF_DIR
 
 
@@ -80,17 +79,23 @@ for sample_number in "${unique_sorted_numbers[@]}" # Iterate over samples
 do
 	echo "Analyzing sample $sample_number..."
 	
+	# Create temporary directories
+	
+	mkdir -p $TEMP_DIR
+	
+	SUBDIR_SAMPLE=$TEMP_DIR/S${sample_number}_subdir
+	mkdir -p $SUBDIR_SAMPLE
+	
 	for file_R1 in $INPUT_DIR/*S${sample_number}_*_R1_001.fastq.gz # Iterate over files
 	do
 		
 		echo "Working with file $file_R1..."
 		
 		base=$(basename $file_R1 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
-
 		# Make output directory for the lane
 		
-		OUTPUT_SUBDIR=$OUTPUT_DIR/$base 
-		mkdir -p $OUTPUT_SUBDIR
+		SUBDIR_LANE=$TEMP_DIR/$base 
+		mkdir -p $SUBDIR_LANE
 	
 		# File with reverse reads
 		
@@ -98,8 +103,8 @@ do
 		
 		# Paths for trimmed files
 		
-		fastq_trim1=$OUTPUT_SUBDIR/${base}_R1_001.fastq
-		fastq_trim2=$OUTPUT_SUBDIR/${base}_R2_001.fastq
+		fastq_trim1=$SUBDIR_LANE/${base}_R1_001.fastq
+		fastq_trim2=$SUBDIR_LANE/${base}_R2_001.fastq
 
 		# Trimming
 		
@@ -121,7 +126,7 @@ do
 			-x $REF_DIR/$index_base \
 			-1 $fastq_trim1 \
 			-2 $fastq_trim2 \
-			-S $OUTPUT_SUBDIR/$sam_output
+			-S $SUBDIR_LANE/$sam_output
 		
 		echo "Launching GATK..."
 		
@@ -130,8 +135,8 @@ do
 		echo "Sorting alignments..."
 		
 		python3 $PATH_TO_GATK_PYFILE SortSam \
-			-I $OUTPUT_SUBDIR/$sam_output \
-			-O $OUTPUT_SUBDIR/${base}.sorted.sam \
+			-I $SUBDIR_LANE/$sam_output \
+			-O $SUBDIR_LANE/${base}.sorted.sam \
 			--SORT_ORDER coordinate \
 			--VALIDATION_STRINGENCY LENIENT
 
@@ -140,8 +145,8 @@ do
 		echo "Marking duplicates..."
 		
 		python3 $PATH_TO_GATK_PYFILE MarkDuplicates \
-			-I $OUTPUT_SUBDIR/${base}.sorted.sam \
-		       	-O $OUTPUT_SUBDIR/${base}.dedup.sam \
+			-I $SUBDIR_LANE/${base}.sorted.sam \
+		       	-O $SUBDIR_LANE/${base}.dedup.sam \
 			--METRICS_FILE $OUTPUT_SUBDIR/metrix.txt \
 			--ASSUME_SORTED true \
 			--VALIDATION_STRINGENCY LENIENT
@@ -150,13 +155,13 @@ do
 		
 		echo "Converting to .bam..."
 		
-		samtools sort $OUTPUT_SUBDIR/${base}.dedup.sam > $OUTPUT_SUBDIR/${base}.bam
+		samtools sort $SUBDIR_LANE/${base}.dedup.sam > $SUBDIR_LANE/${base}.bam
 		
 		# Add name for read group in .bam file
 		
 		python3 $PATH_TO_GATK_PYFILE AddOrReplaceReadGroups \
-			I=$OUTPUT_SUBDIR/${base}.bam \
-			O=$BAM_DIR/${base}.grouped.bam \
+			I=$SUBDIR_LANE/${base}.bam \
+			O=$SUBDIR_SAMPLE/${base}.grouped.bam \
 			RGID=4 \
 			RGLB=lib1 \
 			RGPL=ILLUMINA \
@@ -167,17 +172,17 @@ do
 	
 	# Merge .bam files from each lane of the sample
 	
-	samtools merge -f $BAM_DIR/S${sample_number}_merged.bam $BAM_DIR/*_S${sample_number}_L00[1-4].grouped.bam
+	samtools merge -f $SUBDIR_SAMPLE/S${sample_number}_merged.bam $SUBDIR_SAMPLE/*_S${sample_number}_L00[1-4].grouped.bam
 	
 	# Index .bam files
 	
-	samtools index $BAM_DIR/S${sample_number}_merged.bam
+	samtools index $SUBDIR_SAMPLE/S${sample_number}_merged.bam
 	
 	# Use HaplotypeCaller to create .vcf files
 	
 	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
 			-R $REF_DIR/$ref_fa \
-			-I $BAM_DIR/S${sample_number}_merged.bam \
+			-I $SUBDIR_SAMPLE/$S{sample_number}_merged.bam \
 			-O $VCF_DIR/${sample_number}_sample.vcf.gz \
 			-ERC GVCF
 	
@@ -208,12 +213,14 @@ echo $input
 # 
 mkdir -p final_folder
 
+# vcf quality filtration
+cat $OUTPUT_DIR/final_folder/genotype.ann.vcf | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $OUTPUT_DIR/final_folder/filtered.vcf 
+
+# SnpEff annotation
 java -Xmx8g -jar $PATH_TO_SNPEFF/snpEff.jar -v \
      -lof \
      GRCh37.75 \
      $OUTPUT_DIR/genotype.vcf.gz > $OUTPUT_DIR/final_folder/genotype.ann.vcf
-
-cat $OUTPUT_DIR/final_folder/genotype.ann.vcf | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $OUTPUT_DIR/final_folder/filtered.vcf ###################
 
 # .vcf annotation with clinvar database
 java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar annotate -id -v $PATH_TO_SNPEFF/data/GRCh37.75/clinvar/clinvar.vcf.gz $OUTPUT_DIR/final_folder/filtered.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.vcf
