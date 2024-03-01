@@ -70,7 +70,6 @@ echo "Analyzing samples..."
 
 
 
-
 ######## Run pipeline by samples ########
 
 for sample_number in "${unique_sorted_numbers[@]}" # Iterate over samples
@@ -86,7 +85,7 @@ do
 	
 	for file_R1 in $INPUT_DIR/*S${sample_number}_*_R1_001.fastq.gz # Iterate over files
 	do
-		
+
 		echo "Working with file $file_R1..."
 		
 		base=$(basename $file_R1 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
@@ -105,7 +104,7 @@ do
 		fastq_trim2=$SUBDIR_LANE/${base}_R2_001.fastq
 
 		# Trimming
-		
+
 		echo "Launching fastp..."
 		
 		fastp -i $file_R1 -I $file_R2 -l $length -y 50 -n 0 -o $fastq_trim1 -O $fastq_trim2
@@ -127,6 +126,7 @@ do
 			-1 $fastq_trim1 \
 			-2 $fastq_trim2 \
 			-S $SUBDIR_LANE/$sam_output
+
 		
 		echo "Launching GATK..."
 		
@@ -147,7 +147,7 @@ do
 		python3 $PATH_TO_GATK_PYFILE MarkDuplicates \
 			-I $SUBDIR_LANE/${base}.sorted.sam \
 		       	-O $SUBDIR_LANE/${base}.dedup.sam \
-			--METRICS_FILE $OUTPUT_SUBDIR/metrix.txt \
+			--METRICS_FILE $SUBDIR_LANE/metrix.txt \
 			--ASSUME_SORTED true \
 			--VALIDATION_STRINGENCY LENIENT
 				
@@ -167,99 +167,79 @@ do
 			RGPL=ILLUMINA \
 			RGPU=unit1 \
 			RGSM=20
-		
+	
 	done
 	
 	# Merge .bam files from each lane of the sample
 	
+	echo "Merging .bam files..."
+
 	samtools merge -f $SUBDIR_SAMPLE/S${sample_number}_merged.bam $SUBDIR_SAMPLE/*_S${sample_number}_L00[1-4].grouped.bam
 	
 	# Index .bam files
+	
+	echo "Indexing merged .bam file..."
 	
 	samtools index $SUBDIR_SAMPLE/S${sample_number}_merged.bam
 	
 	# Use HaplotypeCaller to create .vcf files
 	
+	echo "Create .vcf files by HaplotypeCaller"
+	
 	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
 			-R $REF_DIR/$ref_fa \
 			-I $SUBDIR_SAMPLE/S${sample_number}_merged.bam \
 			-O $SUBDIR_SAMPLE/S${sample_number}.vcf.gz \
-			-ERC GVCF
-	
-	# vcf quality filtration
-	
-	cat $SUBDIR_SAMPLE/S${sample_number}.vcf.gz | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $SUBDIR_SAMPLE/S${sample_number}.filtered.vcf 
+			-ERC GVCF 
 
 	# SnpEff annotation
 	
-	java -Xmx8g -jar $PATH_TO_SNPEFF/snpEff.jar -v \
+	echo "Perform SnpEff annotation..."
+	
+	java -Xmx8g -jar $PATH_TO_SNPEFF_FOLDER/snpEff.jar -v \
 	     -lof \
 	     GRCh37.75 \
-	     $SUBDIR_SAMPLE/S${sample_number}.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf # vcf.gz used before; check if works
-
+	     $SUBDIR_SAMPLE/S${sample_number}.vcf.gz > $SUBDIR_SAMPLE/S${sample_number}.ann.vcf 
+	     
+	# vcf quality filtration
+	
+	echo "Filter .vcf file by quality..."
+	
+	cat $SUBDIR_SAMPLE/S${sample_number}.ann.vcf | java -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter " ( QUAL >= 50 )" > $SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf
 	
 	# .vcf annotation with clinvar database
 	
-	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar annotate -id \
-	-v $PATH_TO_SNPEFF/data/GRCh37.75/clinvar/clinvar.vcf.gz \
+	echo "Perform .vcf file annotation with clinvar database..."
+	
+	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar annotate -id \
+	-v $PATH_TO_SNPEFF_FOLDER/data/GRCh37.75/clinvar/clinvar.vcf.gz \
 	$SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf
 
 	# Filtration by clinvar database
 	
-	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar filter \
+	echo "Filter .vcf files basing on clinvar data..."
+	
+	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter \
 	-v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " \
 	$SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf
 
+	echo "WTF..."
 	# 
-	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar varType -v \
+	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar varType -v \
 	$SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf > $VCF_DIR/S${sample_number}.vcf
+	
+	echo "Obtain .tsv table from .vcf file..."
 
-	# Obtain .tsv table from 
-	java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar extractFields -s "," \
+	# Obtain .tsv table from vcf files
+	java -Xmx8g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar extractFields -s "," \
 	-v $VCF_DIR/S${sample_number}.vcf \
 	CHROM POS ID REF ALT QUAL VARTYPE SNP MNP INS DEL MIXED HOM HET ANN[*].ALLELE ANN[*].EFFECT ANN[*].IMPACT ANN[*].GENE ANN[*].GENEID ANN[*].FEATURE ANN[*].FEATUREID ANN[*].BIOTYPE ANN[*].RANK ANN[*].HGVS_C ANN[*].HGVS_P ANN[*].CDNA_POS ANN[*].CDNA_LEN ANN[*].CDS_POS ANN[*].CDS_LEN ANN[*].AA_POS ANN[*].AA_LEN ANN[*].DISTANCE ANN[*].ERRORS LOF[*].NUMTR LOF[*].PERC NMD[*].NUMTR NMD[*].PERC ANN DBVARID ALLELEID CLNSIG CLNVCSO CLNREVSTAT RS CLNDNINCL ORIGIN MC CLNDN CLNVC CLNVI AF_EXAC AF_ESP CLNSIGINCL CLNDISDB GENEINFO CLNDISDBINCL AF_TGP CLNSIGCONF CLNHGVS \
 	> $VCF_DIR/S${sample_number}.tsv
 	
 	# Remove subfolders and files in temporal directory
 	
+	echo "Done with sample $sample_number"	
 	rm -r $TEMP_DIR
 done
 
-
-:'
-
-Code to be removed:
-
-# Create a list with all vcf files in vcf_folder
-
-for file in $VCF_DIR/*vcf.gz
-do
-  input+=("-V $file")
-done
-
-echo $input
-
-
-# vcf quality filtration
-cat $OUTPUT_DIR/final_folder/genotype.ann.vcf | java -jar $PATH_TO_SNPEFF/SnpSift.jar filter " ( QUAL >= 50 )" > $OUTPUT_DIR/final_folder/filtered.vcf 
-
-# SnpEff annotation
-java -Xmx8g -jar $PATH_TO_SNPEFF/snpEff.jar -v \
-     -lof \
-     GRCh37.75 \
-     $OUTPUT_DIR/genotype.vcf.gz > $OUTPUT_DIR/final_folder/genotype.ann.vcf
-
-# .vcf annotation with clinvar database
-java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar annotate -id -v $PATH_TO_SNPEFF/data/GRCh37.75/clinvar/clinvar.vcf.gz $OUTPUT_DIR/final_folder/filtered.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.vcf
-
-# Filtration by clinvar database
-java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar filter -v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " $OUTPUT_DIR/final_folder/vatiants.clinvar.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.filtered.vcf
-
-# 
-java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar varType -v $OUTPUT_DIR/final_folder/vatiants.clinvar.filtered.vcf > $OUTPUT_DIR/final_folder/vatiants.clinvar.vt.filtered.vcf
-
-# Obtain .tsv table from 
-java -Xmx8g -jar $PATH_TO_SNPEFF/SnpSift.jar extractFields -s "," -v $OUTPUT_DIR/final_folder/vatiants.clinvar.vt.filtered.vcf CHROM POS ID REF ALT QUAL VARTYPE SNP MNP INS DEL MIXED HOM HET ANN[*].ALLELE ANN[*].EFFECT ANN[*].IMPACT ANN[*].GENE ANN[*].GENEID ANN[*].FEATURE ANN[*].FEATUREID ANN[*].BIOTYPE ANN[*].RANK ANN[*].HGVS_C ANN[*].HGVS_P ANN[*].CDNA_POS ANN[*].CDNA_LEN ANN[*].CDS_POS ANN[*].CDS_LEN ANN[*].AA_POS ANN[*].AA_LEN ANN[*].DISTANCE ANN[*].ERRORS LOF[*].NUMTR LOF[*].PERC NMD[*].NUMTR NMD[*].PERC ANN DBVARID ALLELEID CLNSIG CLNVCSO CLNREVSTAT RS CLNDNINCL ORIGIN MC CLNDN CLNVC CLNVI AF_EXAC AF_ESP CLNSIGINCL CLNDISDB GENEINFO CLNDISDBINCL AF_TGP CLNSIGCONF CLNHGVS > $OUTPUT_DIR/final_folder/extracted.tsv
-
-'
 
