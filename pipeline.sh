@@ -40,9 +40,11 @@ TEMP_DIR=$OUTPUT_DIR/$temp_dir
 VCF_DIR=$OUTPUT_DIR/$VCF_dir
 
 # Arbitrary decision about the maximal length of sequences to be trimmed of
+
 length=140
 
 # Make OUTPUT_DIR if it doesn't exist
+
 mkdir -p $OUTPUT_DIR
 mkdir -p $VCF_DIR
 
@@ -65,7 +67,6 @@ for file in "$INPUT_DIR"/*; do
     fi
 done
 
-
 # Remove duplicates and sort the array naturally
 unique_sorted_numbers=($(echo "${sample_numbers[@]}" | tr ' ' '\n' | sort -n -k1,1 | uniq))
 
@@ -84,7 +85,7 @@ for sample_number in "${unique_sorted_numbers[@]}" # Iterate over samples
 do
 	echo "Analyzing sample $sample_number..."
 	
-	# Create temporary directories	
+	# Create temporary directories
 	mkdir -p $TEMP_DIR
 	
 	SUBDIR_SAMPLE=$TEMP_DIR/S${sample_number}_subdir
@@ -96,7 +97,6 @@ do
 		echo "Working with file $file_R1..."
 		
 		base=$(basename $file_R1 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
-		
 		# Make output directory for the lane
 		SUBDIR_LANE=$TEMP_DIR/$base 
 		mkdir -p $SUBDIR_LANE
@@ -114,21 +114,21 @@ do
 		fastp -i $file_R1 -I $file_R2 -l $length -y 50 -n 0 -o $fastq_trim1 -O $fastq_trim2
 
 		if ! [ -f  $REF_DIR/${index_base}.1.bt2 ]; then #Check if index file exists			
-	    		bowtie2-build $REF_DIR/$ref_fa $REF_DIR/$index_base #Make index files 
+	    		bowtie2-build --quiet $REF_DIR/$ref_fa $REF_DIR/$index_base #Make index files 
 		fi
 
 		# Path for alignment
 		sam_output=${base}.sam
 		
-		# Alignment
+		# Perform alignment
 		echo "Making alignment..."
 		
 		bowtie2 -p $n_cores \
 			-x $REF_DIR/$index_base \
 			-1 $fastq_trim1 \
 			-2 $fastq_trim2 \
-			-S $SUBDIR_LANE/$sam_output
-
+			-S $SUBDIR_LANE/$sam_output \
+			--quiet
 		
 		echo "Launching GATK..."
 		
@@ -139,7 +139,8 @@ do
 			-I $SUBDIR_LANE/$sam_output \
 			-O $SUBDIR_LANE/${base}.sorted.sam \
 			--SORT_ORDER coordinate \
-			--VALIDATION_STRINGENCY LENIENT
+			--VALIDATION_STRINGENCY LENIENT \
+			--QUIET
 
 		# .sam file deduplication
 		echo "Marking duplicates..."
@@ -149,11 +150,12 @@ do
 		       	-O $SUBDIR_LANE/${base}.dedup.sam \
 			--METRICS_FILE $SUBDIR_LANE/metrix.txt \
 			--ASSUME_SORTED true \
-			--VALIDATION_STRINGENCY LENIENT
+			--VALIDATION_STRINGENCY LENIENT \
+			--QUIET
 				
-		# Convert .sam to .bam
+		# Convert .sam to .bam		
 		echo "Converting to .bam..."
-		
+
 		samtools sort $SUBDIR_LANE/${base}.dedup.sam > $SUBDIR_LANE/${base}.bam
 		
 		# Add name for read group in .bam file
@@ -164,7 +166,8 @@ do
 			RGLB=lib1 \
 			RGPL=ILLUMINA \
 			RGPU=unit1 \
-			RGSM=20 
+			RGSM=20 \
+			QUIET=false
 	
 	done
 	
@@ -221,7 +224,6 @@ do
 	
 	echo "Obtain .tsv table from .vcf file..."
 
-
 	# Obtain .tsv table from vcf files
 	java -Xmx8g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar extractFields -s "," \
 	-v $VCF_DIR/S${sample_number}.vcf \
@@ -229,6 +231,7 @@ do
 	> $VCF_DIR/S${sample_number}.tsv
 	
 	# Remove subfolders and files in temporal directory
+	
 	echo "Done with sample $sample_number"	
 	rm -r $TEMP_DIR
 done
