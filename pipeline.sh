@@ -5,6 +5,19 @@ n_cores=4 # by default
 temp_dir=temp_folder
 VCF_dir=vcf_folder 
 
+: '
+		Arguments
+	-i: Path to directiry with input FASTQ files
+	-o: Path to output directiry
+	-n: number of cores to be involved during pipeline operating time
+	-d: path to the directory with FASTA reference file
+	-f: reference FASTA file name
+	-b: base of the indexes
+	-g: path to the GATK .py file
+	-s: path to the folder with SnpEff and SnpSift .jar file
+
+
+'
 
 ######## Arguments #######
 
@@ -27,11 +40,9 @@ TEMP_DIR=$OUTPUT_DIR/$temp_dir
 VCF_DIR=$OUTPUT_DIR/$VCF_dir
 
 # Arbitrary decision about the maximal length of sequences to be trimmed of
-
 length=140
 
 # Make OUTPUT_DIR if it doesn't exist
-
 mkdir -p $OUTPUT_DIR
 mkdir -p $VCF_DIR
 
@@ -41,15 +52,12 @@ mkdir -p $VCF_DIR
 ######## Retrieve list of sample numbers ########
 
 # Define an empty array to store the sample numbers
-
 sample_numbers=()
 
 # Define the regular expression pattern to extract sample numbers
-
 pattern="[0-9]+_S([0-9]+)_"
 
 # Loop through the files in the folder
-
 for file in "$INPUT_DIR"/*; do
     if [[ $file =~ $pattern ]]; then
         sample_number="${BASH_REMATCH[1]}"
@@ -57,8 +65,8 @@ for file in "$INPUT_DIR"/*; do
     fi
 done
 
-# Remove duplicates and sort the array naturally
 
+# Remove duplicates and sort the array naturally
 unique_sorted_numbers=($(echo "${sample_numbers[@]}" | tr ' ' '\n' | sort -n -k1,1 | uniq))
 
 echo "Running samtools indexing..."
@@ -76,8 +84,7 @@ for sample_number in "${unique_sorted_numbers[@]}" # Iterate over samples
 do
 	echo "Analyzing sample $sample_number..."
 	
-	# Create temporary directories
-	
+	# Create temporary directories	
 	mkdir -p $TEMP_DIR
 	
 	SUBDIR_SAMPLE=$TEMP_DIR/S${sample_number}_subdir
@@ -89,22 +96,19 @@ do
 		echo "Working with file $file_R1..."
 		
 		base=$(basename $file_R1 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
-		# Make output directory for the lane
 		
+		# Make output directory for the lane
 		SUBDIR_LANE=$TEMP_DIR/$base 
 		mkdir -p $SUBDIR_LANE
 	
 		# File with reverse reads
-		
 		file_R2=$INPUT_DIR/${base}_R2_001.fastq.gz
 		
 		# Paths for trimmed files
-		
 		fastq_trim1=$SUBDIR_LANE/${base}_R1_001.fastq
 		fastq_trim2=$SUBDIR_LANE/${base}_R2_001.fastq
 
 		# Trimming
-
 		echo "Launching fastp..."
 		
 		fastp -i $file_R1 -I $file_R2 -l $length -y 50 -n 0 -o $fastq_trim1 -O $fastq_trim2
@@ -114,11 +118,9 @@ do
 		fi
 
 		# Path for alignment
-		
 		sam_output=${base}.sam
 		
 		# Alignment
-		
 		echo "Making alignment..."
 		
 		bowtie2 -p $n_cores \
@@ -131,7 +133,6 @@ do
 		echo "Launching GATK..."
 		
 		# sort .sam files
-		
 		echo "Sorting alignments..."
 		
 		python3 $PATH_TO_GATK_PYFILE SortSam \
@@ -141,7 +142,6 @@ do
 			--VALIDATION_STRINGENCY LENIENT
 
 		# .sam file deduplication
-		
 		echo "Marking duplicates..."
 		
 		python3 $PATH_TO_GATK_PYFILE MarkDuplicates \
@@ -152,13 +152,11 @@ do
 			--VALIDATION_STRINGENCY LENIENT
 				
 		# Convert .sam to .bam
-		
 		echo "Converting to .bam..."
 		
 		samtools sort $SUBDIR_LANE/${base}.dedup.sam > $SUBDIR_LANE/${base}.bam
 		
 		# Add name for read group in .bam file
-		
 		python3 $PATH_TO_GATK_PYFILE AddOrReplaceReadGroups \
 			I=$SUBDIR_LANE/${base}.bam \
 			O=$SUBDIR_SAMPLE/${base}.grouped.bam \
@@ -166,24 +164,21 @@ do
 			RGLB=lib1 \
 			RGPL=ILLUMINA \
 			RGPU=unit1 \
-			RGSM=20
+			RGSM=20 
 	
 	done
 	
 	# Merge .bam files from each lane of the sample
-	
 	echo "Merging .bam files..."
 
 	samtools merge -f $SUBDIR_SAMPLE/S${sample_number}_merged.bam $SUBDIR_SAMPLE/*_S${sample_number}_L00[1-4].grouped.bam
 	
 	# Index .bam files
-	
 	echo "Indexing merged .bam file..."
 	
 	samtools index $SUBDIR_SAMPLE/S${sample_number}_merged.bam
 	
 	# Use HaplotypeCaller to create .vcf files
-	
 	echo "Create .vcf files by HaplotypeCaller"
 	
 	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
@@ -193,7 +188,6 @@ do
 			-ERC GVCF 
 
 	# SnpEff annotation
-	
 	echo "Perform SnpEff annotation..."
 	
 	java -Xmx8g -jar $PATH_TO_SNPEFF_FOLDER/snpEff.jar -v \
@@ -202,13 +196,11 @@ do
 	     $SUBDIR_SAMPLE/S${sample_number}.vcf.gz > $SUBDIR_SAMPLE/S${sample_number}.ann.vcf 
 	     
 	# vcf quality filtration
-	
 	echo "Filter .vcf file by quality..."
 	
 	cat $SUBDIR_SAMPLE/S${sample_number}.ann.vcf | java -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter " ( QUAL >= 50 )" > $SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf
 	
 	# .vcf annotation with clinvar database
-	
 	echo "Perform .vcf file annotation with clinvar database..."
 	
 	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar annotate -id \
@@ -216,7 +208,6 @@ do
 	$SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf
 
 	# Filtration by clinvar database
-	
 	echo "Filter .vcf files basing on clinvar data..."
 	
 	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter \
@@ -224,11 +215,12 @@ do
 	$SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf
 
 	echo "WTF..."
-	# 
+	#
 	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar varType -v \
 	$SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf > $VCF_DIR/S${sample_number}.vcf
 	
 	echo "Obtain .tsv table from .vcf file..."
+
 
 	# Obtain .tsv table from vcf files
 	java -Xmx8g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar extractFields -s "," \
@@ -237,7 +229,6 @@ do
 	> $VCF_DIR/S${sample_number}.tsv
 	
 	# Remove subfolders and files in temporal directory
-	
 	echo "Done with sample $sample_number"	
 	rm -r $TEMP_DIR
 done
