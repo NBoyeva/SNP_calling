@@ -4,6 +4,7 @@
 n_cores=4 # by default
 temp_dir=temp_folder
 VCF_dir=vcf_folder 
+RAM=8
 
 : '
 		Arguments
@@ -21,7 +22,7 @@ VCF_dir=vcf_folder
 
 ######## Arguments #######
 
-while getopts 'i:o:n:d:f:b:g:s:' flag; do
+while getopts 'i:o:n:d:f:b:g:s:r:' flag; do
   case "${flag}" in
     i) INPUT_DIR=${OPTARG} ;;
     o) OUTPUT_DIR=${OPTARG} ;;
@@ -30,7 +31,8 @@ while getopts 'i:o:n:d:f:b:g:s:' flag; do
     f) ref_fa=${OPTARG} ;;
     b) index_base=${OPTARG} ;;
     g) PATH_TO_GATK_PYFILE=${OPTARG} ;;
-    s) PATH_TO_SNPEFF_FOLDER=${OPTARG} ;; 
+    s) PATH_TO_SNPEFF_FOLDER=${OPTARG} ;;
+    r) RAM=${OPTARG} ;;
     *) print_usage
        exit 1 ;;
   esac
@@ -97,6 +99,7 @@ do
 		echo "Working with file $file_R1..."
 		
 		base=$(basename $file_R1 _R1_001.fastq.gz) # Basename, e.g. 48_S1_L001
+		
 		# Make output directory for the lane
 		SUBDIR_LANE=$TEMP_DIR/$base 
 		mkdir -p $SUBDIR_LANE
@@ -184,7 +187,7 @@ do
 	# Use HaplotypeCaller to create .vcf files
 	echo "Create .vcf files by HaplotypeCaller"
 	
-	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx11g" HaplotypeCaller  \
+	python3 $PATH_TO_GATK_PYFILE --java-options "-Xmx${RAM}g" HaplotypeCaller  \
 			-R $REF_DIR/$ref_fa \
 			-I $SUBDIR_SAMPLE/S${sample_number}_merged.bam \
 			-O $SUBDIR_SAMPLE/S${sample_number}.vcf.gz \
@@ -193,7 +196,7 @@ do
 	# SnpEff annotation
 	echo "Perform SnpEff annotation..."
 	
-	java -Xmx8g -jar $PATH_TO_SNPEFF_FOLDER/snpEff.jar -v \
+	java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/snpEff.jar -v \
 	     -lof \
 	     GRCh37.75 \
 	     $SUBDIR_SAMPLE/S${sample_number}.vcf.gz > $SUBDIR_SAMPLE/S${sample_number}.ann.vcf 
@@ -206,26 +209,26 @@ do
 	# .vcf annotation with clinvar database
 	echo "Perform .vcf file annotation with clinvar database..."
 	
-	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar annotate -id \
+	java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar annotate -id \
 	-v $PATH_TO_SNPEFF_FOLDER/data/GRCh37.75/clinvar/clinvar.vcf.gz \
 	$SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf
 
 	# Filtration by clinvar database
 	echo "Filter .vcf files basing on clinvar data..."
 	
-	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter \
+	java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter \
 	-v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " \
 	$SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf
 
-	echo "WTF..."
-	#
-	java -Xmx11g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar varType -v \
+	echo "Annotating variant types..."
+	# Variant type annotation
+	java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar varType -v \
 	$SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf > $VCF_DIR/S${sample_number}.vcf
 	
 	echo "Obtain .tsv table from .vcf file..."
 
 	# Obtain .tsv table from vcf files
-	java -Xmx8g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar extractFields -s "," \
+	java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar extractFields -s "," \
 	-v $VCF_DIR/S${sample_number}.vcf \
 	CHROM POS ID REF ALT QUAL VARTYPE SNP MNP INS DEL MIXED HOM HET ANN[*].ALLELE ANN[*].EFFECT ANN[*].IMPACT ANN[*].GENE ANN[*].GENEID ANN[*].FEATURE ANN[*].FEATUREID ANN[*].BIOTYPE ANN[*].RANK ANN[*].HGVS_C ANN[*].HGVS_P ANN[*].CDNA_POS ANN[*].CDNA_LEN ANN[*].CDS_POS ANN[*].CDS_LEN ANN[*].AA_POS ANN[*].AA_LEN ANN[*].DISTANCE ANN[*].ERRORS LOF[*].NUMTR LOF[*].PERC NMD[*].NUMTR NMD[*].PERC ANN DBVARID ALLELEID CLNSIG CLNVCSO CLNREVSTAT RS CLNDNINCL ORIGIN MC CLNDN CLNVC CLNVI AF_EXAC AF_ESP CLNSIGINCL CLNDISDB GENEINFO CLNDISDBINCL AF_TGP CLNSIGCONF CLNHGVS \
 	> $VCF_DIR/S${sample_number}.tsv
