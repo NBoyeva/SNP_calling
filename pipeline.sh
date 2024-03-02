@@ -1,11 +1,5 @@
 #!/bin/bash
 
-CLINVAR_FILTERING=1
-n_cores=4 # by default
-temp_dir=temp_folder
-VCF_dir=vcf_folder 
-RAM=8
-
 : '
 		Arguments
 	-i: Path to directiry with input FASTQ files
@@ -21,6 +15,13 @@ RAM=8
 '
 
 ######## Arguments #######
+
+# By default:
+CLINVAR_FILTERING=1
+n_cores=4 
+temp_dir=temp_folder
+VCF_dir=vcf_folder 
+RAM=8
 
 while getopts 'i:o:n:d:f:b:g:s:r:v:' flag; do
   case "${flag}" in
@@ -43,11 +44,9 @@ TEMP_DIR=$OUTPUT_DIR/$temp_dir
 VCF_DIR=$OUTPUT_DIR/$VCF_dir
 
 # Arbitrary decision about the maximal length of sequences to be trimmed of
-
 length=140
 
 # Make OUTPUT_DIR if it doesn't exist
-
 mkdir -p $OUTPUT_DIR
 mkdir -p $VCF_DIR
 
@@ -192,7 +191,7 @@ do
 			-R $REF_DIR/$ref_fa \
 			-I $SUBDIR_SAMPLE/S${sample_number}_merged.bam \
 			-O $SUBDIR_SAMPLE/S${sample_number}.vcf.gz \
-			-ERC GVCF 
+			-ERC NONE 
 
 	# SnpEff annotation
 	echo "Perform SnpEff annotation..."
