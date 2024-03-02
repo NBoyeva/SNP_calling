@@ -1,6 +1,6 @@
 #!/bin/bash
 
-
+CLINVAR_FILTERING=1
 n_cores=4 # by default
 temp_dir=temp_folder
 VCF_dir=vcf_folder 
@@ -22,7 +22,7 @@ RAM=8
 
 ######## Arguments #######
 
-while getopts 'i:o:n:d:f:b:g:s:r:' flag; do
+while getopts 'i:o:n:d:f:b:g:s:r:v:' flag; do
   case "${flag}" in
     i) INPUT_DIR=${OPTARG} ;;
     o) OUTPUT_DIR=${OPTARG} ;;
@@ -33,6 +33,7 @@ while getopts 'i:o:n:d:f:b:g:s:r:' flag; do
     g) PATH_TO_GATK_PYFILE=${OPTARG} ;;
     s) PATH_TO_SNPEFF_FOLDER=${OPTARG} ;;
     r) RAM=${OPTARG} ;;
+    v) CLINVAR_FILTERING=${OPTARG} ;;
     *) print_usage
        exit 1 ;;
   esac
@@ -213,17 +214,25 @@ do
 	-v $PATH_TO_SNPEFF_FOLDER/data/GRCh37.75/clinvar/clinvar.vcf.gz \
 	$SUBDIR_SAMPLE/S${sample_number}.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf
 
-	# Filtration by clinvar database
-	echo "Filter .vcf files basing on clinvar data..."
+	# Set name of the current file
+	this_file_name=$SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf
 	
-	java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter \
-	-v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " \
-	$SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf
+	# Filtration by clinvar database
+	if [ $CLINVAR_FILTERING -eq 0 ]; then
+		echo "Filter .vcf files basing on clinvar data..."
 
+		java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar filter \
+		-v " ( (ANN[0].IMPACT has 'HIGH') | (ANN[0].IMPACT has 'MODERATE') | (exists CLNSIGINCL) ) " \
+		$SUBDIR_SAMPLE/S${sample_number}.clinvar.ann.filtered.vcf > $SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf
+	
+		# Change name of the current file
+		this_file_name=$SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf
+	fi
+	
 	echo "Annotating variant types..."
 	# Variant type annotation
 	java -Xmx${RAM}g -jar $PATH_TO_SNPEFF_FOLDER/SnpSift.jar varType -v \
-	$SUBDIR_SAMPLE/S${sample_number}.filtered_clinvar.ann.filtered.vcf > $VCF_DIR/S${sample_number}.vcf
+	$this_file_name > $VCF_DIR/S${sample_number}.vcf
 	
 	echo "Obtain .tsv table from .vcf file..."
 
